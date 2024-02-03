@@ -1,0 +1,5 @@
+=== RUN   TestFigure8Unreliable2C
+Test (2C): Figure 8 (unreliable) ...
+  ... Passed --  34.8  5 32409 41588296  231
+--- PASS: TestFigure8Unreliable2C (34.83s)
+PASS
