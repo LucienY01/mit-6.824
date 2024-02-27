@@ -1,0 +1,4 @@
+usage:
+rm test-*.err; rm test-*.log
+bash ../go-test-many.sh 30 1 "2A"
+rm test-*.err; rm test-*.log; bash ../go-test-many.sh 10 1 "2A"

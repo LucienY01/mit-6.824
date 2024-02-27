@@ -11,4 +11,11 @@ mrtmp.*
 /main/mrsequential
 /main/mrworker
 
-/raft/tester
+tester
+
+/raft/fail-log
+/raft/test-*.err
+/raft/test-*.log
+
+/kvraft/test-*.err
+/kvraft/test-*.log

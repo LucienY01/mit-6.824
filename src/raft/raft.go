@@ -22,7 +22,6 @@ import (
 
 	"bytes"
 	"fmt"
-	"log"
 	"math/rand"
 	"sync"
 	"sync/atomic"
@@ -31,14 +30,6 @@ import (
 	"6.824/labgob"
 	"6.824/labrpc"
 )
-
-const isDebugMode = false
-
-func debugf(format string, v ...interface{}) {
-	if isDebugMode {
-		log.Printf(format, v...)
-	}
-}
 
 // as each Raft peer becomes aware that successive log entries are
 // committed, the peer should send an ApplyMsg to the service (or
@@ -305,7 +296,6 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
-	debugf("peer %d receive AppendEntries: curTerm = %d", rf.me, rf.currentTerm)
 	needPersist := false
 	defer func() {
 		if needPersist {
@@ -314,9 +304,13 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	}()
 
 	if args.Term > rf.currentTerm {
+		DPrintf("peer %d receive AppendEntries from leader %d: update term %d => %d",
+			rf.me, args.LeaderID, rf.currentTerm, args.Term)
 		rf.updateTerm(args.Term)
 		needPersist = true
 	} else if args.Term < rf.currentTerm { // step 1
+		DPrintf("peer %d receive AppendEntries from leader %d: argsTermr=%d < curTerm=%d, ignore",
+			rf.me, args.LeaderID, args.Term, rf.currentTerm)
 		reply.Term = rf.currentTerm
 		reply.Success = false
 		return
@@ -336,24 +330,40 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	rf.resetTimer()
 
 	// step 2
-	if args.PrevLogIndex > len(rf.log)-1 {
-		reply.Success = false
-		reply.ConflictTerm = -1
-		reply.ConflictIndex = len(rf.log)
-		return
-	}
-	prevTerm := rf.log[args.PrevLogIndex].Term
-	if prevTerm != args.PrevLogTerm {
-		reply.Success = false
-		reply.ConflictTerm = prevTerm
-
-		// Set ConflictIndex to the first index whose entry has term equal to ConflictTerm.
-		i := args.PrevLogIndex - 1
-		for rf.log[i].Term == prevTerm {
-			i--
+	if len(args.Entries) > 0 {
+		if args.PrevLogIndex > len(rf.log)-1 {
+			reply.Success = false
+			reply.ConflictTerm = -1
+			reply.ConflictIndex = len(rf.log)
+			DPrintf("peer %d receive AppendEntries from leader %d: curTerm=%d, log inconsistency: shorter than index %d",
+				rf.me, args.LeaderID, rf.currentTerm, args.PrevLogIndex)
+			DPrintf("\tlog: %v", rf.log)
+			DPrintf("\tentries from leader: %v", args.Entries)
+			return
 		}
-		reply.ConflictIndex = i + 1
-		return
+		prevTerm := rf.log[args.PrevLogIndex].Term
+		if prevTerm != args.PrevLogTerm {
+			reply.Success = false
+			reply.ConflictTerm = prevTerm
+
+			// Set ConflictIndex to the first index whose entry has term equal to ConflictTerm.
+			i := args.PrevLogIndex - 1
+			for rf.log[i].Term == prevTerm {
+				i--
+			}
+			reply.ConflictIndex = i + 1
+			DPrintf("peer %d receive AppendEntries from leader %d: curTerm=%d, log inconsistency: not matched",
+				rf.me, args.LeaderID, rf.currentTerm)
+			DPrintf("\tlog from first prevTerm: %v", rf.log[i+1:])
+			DPrintf("\trelative index of args.PrevLogIndex (start at 0): %d", args.PrevLogIndex-(i+1))
+			DPrintf("\tentries from leader: %v", args.Entries)
+			return
+		}
+	} else {
+		// Do not do fast backing up if the RPC is a heartbeat.
+		if args.PrevLogIndex > len(rf.log)-1 || rf.log[args.PrevLogIndex].Term != args.PrevLogTerm {
+			return
+		}
 	}
 
 	// step 3
@@ -365,6 +375,9 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		}
 
 		if rf.log[base+i].Term != args.Entries[i].Term {
+			DPrintf(`peer %d: curTerm=%d, delete conflicting entries:
+	conflict index: %d
+	log before delete: %v`, rf.me, rf.currentTerm, base+i, rf.log)
 			rf.log = rf.log[:base+i]
 			break
 		}
@@ -374,7 +387,11 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	newEntreis := args.Entries[i:]
 	if len(newEntreis) > 0 {
 		needPersist = true
+		DPrintf(`peer %d: curTerm=%d, append new entries:
+	log before append: %v
+	new entries:%v`, rf.me, rf.currentTerm, rf.log, newEntreis)
 		rf.log = append(rf.log, newEntreis...)
+
 	}
 
 	// step 5
@@ -392,6 +409,26 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *AppendEntriesReply) bool {
 	ok := rf.peers[server].Call("Raft.AppendEntries", args, reply)
 	return ok
+}
+
+// Binary search.
+// If present, return an index at which the entry's term equals to key. Otherwise, return -1.
+func (rf *Raft) searchForTerm(end int, key int) int {
+	a := rf.log[1:end]
+	lo := 0
+	hi := len(a) - 1
+	for lo <= hi {
+		// Key is in a[lo..hi] or not present.
+		mid := lo + (hi-lo)/2
+		if key < a[mid].Term {
+			hi = mid - 1
+		} else if key > a[mid].Term {
+			lo = mid + 1
+		} else {
+			return mid + 1
+		}
+	}
+	return -1
 }
 
 // the service using Raft (e.g. a k/v server) wants to start
@@ -447,6 +484,9 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 				rf.mu.Unlock()
 				return
 			}
+
+			DPrintf("leader %d starts to send AppendEntries for index %d to peer %d, curTerm=%d",
+				rf.me, index, server, rf.currentTerm)
 			for {
 				nextI := rf.nextIndex[server]
 				args := AppendEntriesArgs{
@@ -519,16 +559,14 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 					}
 
 					// Fail because of log inconsistency.
-					// Decrement nextIndex and retry.
+					// Back up nextIndex with optimizaition and retry.
 					if reply.ConflictTerm == -1 {
 						rf.nextIndex[server] = reply.ConflictIndex
 					} else {
-						// search its log for ConflictTerm
-						i := args.PrevLogIndex - 1
-						for i >= 1 && rf.log[i].Term != reply.ConflictTerm {
-							i--
-						}
-						if i == 0 {
+						// Search its log for ConflictTerm.
+						// binary search
+						i := rf.searchForTerm(args.PrevLogIndex, reply.ConflictTerm)
+						if i == -1 {
 							// If it does not find an entry with that term,
 							// it should set nextIndex = ConflictIndex.
 							rf.nextIndex[server] = reply.ConflictIndex
@@ -536,9 +574,33 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 							// If it finds an entry in its log with that term,
 							// it should set nextIndex to be
 							// the one beyond the index of the last entry in that term in its log.
-							rf.nextIndex[server] = i + 1
+							i++
+							for rf.log[i].Term == reply.ConflictTerm {
+								i++
+							}
+							rf.nextIndex[server] = i
 						}
+
+						// linear search
+						// i := args.PrevLogIndex - 1
+						// for i >= 1 && rf.log[i].Term != reply.ConflictTerm {
+						// 	i--
+						// }
+						// if i == 0 {
+						// 	// If it does not find an entry with that term,
+						// 	// it should set nextIndex = ConflictIndex.
+						// 	rf.nextIndex[server] = reply.ConflictIndex
+						// } else {
+						// 	// If it finds an entry in its log with that term,
+						// 	// it should set nextIndex to be
+						// 	// the one beyond the index of the last entry in that term in its log.
+						// 	rf.nextIndex[server] = i + 1
+						// }
 					}
+					DPrintf(`leader %d: AppendEntries to peer %d failed because of log inconsistency
+	after fast backing up, nextIndex=%d:
+	log[:nextIndex]: %v
+	log[nextIndex:]: %v`, rf.me, server, rf.nextIndex[server], rf.log[:rf.nextIndex[server]], rf.log[rf.nextIndex[server]:])
 				}
 			}
 		}(server)
@@ -650,7 +712,7 @@ func (rf *Raft) heartbeatSender() {
 
 		time.Sleep(heartbeatTime)
 	}
-	debugf("%d: convert to follower, term = %d", rf.me, rf.currentTerm)
+	DPrintf("%d: convert to follower, term = %d", rf.me, rf.currentTerm)
 }
 
 func (rf *Raft) convertToCandidate() {
@@ -764,13 +826,13 @@ func (rf *Raft) convertToCandidate() {
 
 // unit: ms
 const (
-	minTimeout = 400
-	maxTimeout = 800
+	MinTimeout = 400
+	MaxTimeout = 800
 )
 
 // Returns a timeout between [minTimeout, maxTimeout] at random.
 func getRandomTimeout() time.Duration {
-	return time.Duration(rand.Intn(maxTimeout-minTimeout+1)+minTimeout) * time.Millisecond
+	return time.Duration(rand.Intn(MaxTimeout-MinTimeout+1)+MinTimeout) * time.Millisecond
 }
 
 // The ticker go routine starts a new election if this peer hasn't received
@@ -814,11 +876,13 @@ func (rf *Raft) applier() {
 		}
 
 		rf.mu.Lock()
+		var role string
 		if rf.isLeader() {
-			debugf("leader %d commit cmd, at index: %d", rf.me, lastApplied)
+			role = "leader"
 		} else {
-			debugf("peer %d commit cmd, at index: %d", rf.me, lastApplied)
+			role = "peer"
 		}
+		DPrintf(role+" %d commit cmd=%d at index %d, curTerm=%d", rf.me, cmd, lastApplied, rf.currentTerm)
 		rf.mu.Unlock()
 	}
 }
