@@ -22,3 +22,8 @@ TestFigure8Unreliable2C有0.2%的机率（连续测试500次会出现1次）失�
 我观察到日志里有大量空闲时的heartbeat，而leader方面不处理heatbeat的回退问题。于是我在follower的heartbeat的handler中将快速回退改回了论文中的慢回退，避免了无意义的内存查找，这使得测试总时长平均降低了3秒左右。并且我将leader方面的快速回退查找从顺序查找改成了二分查找，这使得测试总时长平均降低了0.5秒左右。改进后，运算时间减少了，连续测试800次也没有再出现该错误，即出错率小于%0.125。
 
 因为测试失败率较小，每次修改打印信息后要测试许久才能复现，所以解决这个问题还是有点费时的，我用了将近2到3天时间来解决这个问题。
+
+#### TestFigure8Unreliable2C：apply error
+TestFigure8Unreliable2C也有0.2%的几率（连续测试500次会出现1次）发生另一种错误：apply error，即某个结点在某个index提交了和其他所有结点不一样的cmd。经过不断的分析和debug后，发现问题在于AppendEntriesArgs的Entries字段放置了对log的切片，而golang的切片的更改对于其他共享底层数组的切片是可见的，如果AppendEntriesArgs在长时间后重传，其中的Entries字段很可能已经发生改变了。在某种极端情况下，这些改变了的Entries会被某个网络故障一段时间之后恢复的follower接受，导致该follower提交不一致的cmd。
+
+golang切片的共享可变性是一个可能的出错的点，以后在使用切片时我需要多加留意。

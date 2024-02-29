@@ -1,13 +1,13 @@
 === RUN   TestInitialElection2A
 Test (2A): initial election ...
-  ... Passed --   3.6  3   44   12038    0
---- PASS: TestInitialElection2A (3.58s)
+  ... Passed --   3.6  3   44   11794    0
+--- PASS: TestInitialElection2A (3.59s)
 === RUN   TestReElection2A
 Test (2A): election after network failure ...
-  ... Passed --   5.6  3  146   28093    0
---- PASS: TestReElection2A (5.59s)
+  ... Passed --   5.5  3  108   20721    0
+--- PASS: TestReElection2A (5.46s)
 === RUN   TestManyElections2A
 Test (2A): multiple elections ...
-  ... Passed --   5.6  7  637  129455    0
---- PASS: TestManyElections2A (5.59s)
+  ... Passed --   5.5  7  483   91099    0
+--- PASS: TestManyElections2A (5.48s)
 PASS

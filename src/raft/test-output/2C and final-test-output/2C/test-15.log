@@ -1,33 +1,33 @@
 === RUN   TestPersist12C
 Test (2C): basic persistence ...
-  ... Passed --   5.1  3   77   19552    6
---- PASS: TestPersist12C (5.15s)
+  ... Passed --   8.8  3  120   31590    6
+--- PASS: TestPersist12C (8.77s)
 === RUN   TestPersist22C
 Test (2C): more persistence ...
-  ... Passed --  17.6  5  880  186482   16
---- PASS: TestPersist22C (17.62s)
+  ... Passed --  18.0  5  799  163721   16
+--- PASS: TestPersist22C (17.98s)
 === RUN   TestPersist32C
 Test (2C): partitioned leader and one follower crash, leader restarts ...
-  ... Passed --   2.1  3   33    8125    4
---- PASS: TestPersist32C (2.08s)
+  ... Passed --   2.4  3   33    8179    4
+--- PASS: TestPersist32C (2.39s)
 === RUN   TestFigure82C
 Test (2C): Figure 8 ...
-  ... Passed --  33.8  5  753  158283   42
---- PASS: TestFigure82C (33.85s)
+  ... Passed --  37.1  5  823  175836   48
+--- PASS: TestFigure82C (37.10s)
 === RUN   TestUnreliableAgree2C
 Test (2C): unreliable agreement ...
-  ... Passed --   1.6  5 1300  416920  246
---- PASS: TestUnreliableAgree2C (1.60s)
+  ... Passed --   1.6  5 1113  364548  246
+--- PASS: TestUnreliableAgree2C (1.65s)
 === RUN   TestFigure8Unreliable2C
 Test (2C): Figure 8 (unreliable) ...
-  ... Passed --  38.2  5 35762 34023590  344
---- PASS: TestFigure8Unreliable2C (38.23s)
+  ... Passed --  32.2  5 16604 23372559  221
+--- PASS: TestFigure8Unreliable2C (32.18s)
 === RUN   TestReliableChurn2C
 Test (2C): churn ...
-  ... Passed --  16.1  5 6647 16140384  860
---- PASS: TestReliableChurn2C (16.11s)
+  ... Passed --  16.6  5 16583 90319740 3529
+--- PASS: TestReliableChurn2C (16.58s)
 === RUN   TestUnreliableChurn2C
 Test (2C): unreliable churn ...
-  ... Passed --  16.2  5 9601 7235023 1684
---- PASS: TestUnreliableChurn2C (16.23s)
+  ... Passed --  16.6  5 9063 10747451 1748
+--- PASS: TestUnreliableChurn2C (16.57s)
 PASS
