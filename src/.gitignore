@@ -12,8 +12,8 @@ mrtmp.*
 /main/mrworker
 
 tester
+fail-log/
 
-/raft/fail-log
 /raft/test-*.err
 /raft/test-*.log
 
