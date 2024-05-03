@@ -11,7 +11,7 @@ import (
 	"6.824/raft"
 )
 
-const Debug = true
+const Debug = false
 
 func DPrintf(format string, a ...interface{}) (n int, err error) {
 	if Debug {
@@ -35,7 +35,7 @@ type Op struct {
 }
 
 type KVServer struct {
-	mu      sync.Mutex
+	mu      sync.Mutex // lock order: first kv then rf
 	me      int
 	rf      *raft.Raft
 	applyCh chan raft.ApplyMsg

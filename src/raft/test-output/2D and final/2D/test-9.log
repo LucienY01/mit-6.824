@@ -1,0 +1,25 @@
+=== RUN   TestSnapshotBasic2D
+Test (2D): snapshots basic ...
+  ... Passed --   6.0  3  299  150519  222
+--- PASS: TestSnapshotBasic2D (6.04s)
+=== RUN   TestSnapshotInstall2D
+Test (2D): install snapshots (disconnect) ...
+  ... Passed --  47.0  3 1308  971737  318
+--- PASS: TestSnapshotInstall2D (46.96s)
+=== RUN   TestSnapshotInstallUnreliable2D
+Test (2D): install snapshots (disconnect+unreliable) ...
+  ... Passed --  55.0  3 1725  968648  361
+--- PASS: TestSnapshotInstallUnreliable2D (54.96s)
+=== RUN   TestSnapshotInstallCrash2D
+Test (2D): install snapshots (crash) ...
+  ... Passed --  39.8  3 1708 1974445  344
+--- PASS: TestSnapshotInstallCrash2D (39.82s)
+=== RUN   TestSnapshotInstallUnCrash2D
+Test (2D): install snapshots (unreliable+crash) ...
+  ... Passed --  76.2  3 2040 1590904  322
+--- PASS: TestSnapshotInstallUnCrash2D (76.18s)
+=== RUN   TestSnapshotAllCrash2D
+Test (2D): crash and restart all servers ...
+  ... Passed --  33.8  3  373  109632   58
+--- PASS: TestSnapshotAllCrash2D (33.77s)
+PASS

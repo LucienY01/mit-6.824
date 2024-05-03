@@ -27,3 +27,8 @@ TestFigure8Unreliable2C有0.2%的机率（连续测试500次会出现1次）失�
 TestFigure8Unreliable2C也有0.2%的几率（连续测试500次会出现1次）发生另一种错误：apply error，即某个结点在某个index提交了和其他所有结点不一样的cmd。经过不断的分析和debug后，发现问题在于AppendEntriesArgs的Entries字段放置了对log的切片，而golang的切片的更改对于其他共享底层数组的切片是可见的，如果AppendEntriesArgs在长时间后重传，其中的Entries字段很可能已经发生改变了。在某种极端情况下，这些改变了的Entries会被某个网络故障一段时间之后恢复的follower接受，导致该follower提交不一致的cmd。
 
 golang切片的共享可变性是一个可能的出错的点，以后在使用切片时我需要多加留意。
+
+#### 在一个term中出现两个leader
+在2D的测试中，偶尔会出现这种情况。follower选举超时后，启动一个协程来转换为candidate、为自己投票、请求其他结点的投票。
+该协程获取到锁时需要检查自己的currentTerm是否已经增加，currenterm增加了表示自己可能在获取到锁之前为其他结点投过票了。
+我之前没有做这个检查，一个结点为其他结点投票后，又为自己投票，导致了这种错误。
