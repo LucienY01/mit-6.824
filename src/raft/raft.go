@@ -244,6 +244,7 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 	defer rf.mu.Unlock()
 
 	// encode raft state
+	DPrintf("peer %d get entry at index %d, snapshotIndex=%d", rf.me, index, rf.snapshotIndex)
 	lastIncludedTerm := rf.getEntry(index).Term
 	DPrintf(`peer %d takes a snapshot index=%d, term=%d
 	entries before discarding: %v`, rf.me, index, lastIncludedTerm, rf.log)
@@ -737,6 +738,10 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 					reply := InstallSnapshotReply{}
 					ok := rf.sendInstallSnapshot(server, &args, &reply)
 					for !ok {
+						if rf.killed() {
+							return
+						}
+
 						rf.mu.Lock()
 						if rf.currentTerm > term {
 							rf.mu.Unlock()
@@ -1006,6 +1011,10 @@ func (rf *Raft) heartbeatSender(server int, term int) {
 					reply := InstallSnapshotReply{}
 					ok := rf.sendInstallSnapshot(server, &args, &reply)
 					for !ok {
+						if rf.killed() {
+							return
+						}
+
 						rf.mu.Lock()
 						if rf.currentTerm > term {
 							rf.mu.Unlock()
@@ -1246,13 +1255,15 @@ func (rf *Raft) isLeader() bool {
 }
 
 func (rf *Raft) applier() {
+	rf.mu.Lock()
 	if rf.snapshotIndex > 0 {
 		// restart with a snapshot
 		rf.lastApplied = rf.snapshotIndex
 		rf.commitIndex = rf.snapshotIndex
 	}
+	rf.mu.Unlock()
 
-	for {
+	for !rf.killed() {
 		rf.mu.Lock()
 		for rf.commitIndex <= rf.lastApplied ||
 			(rf.isInstallingSnapshot && rf.lastApplied+1 <= rf.expectedSnapshotIndex) {

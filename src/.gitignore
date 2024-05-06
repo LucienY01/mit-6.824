@@ -13,6 +13,7 @@ mrtmp.*
 
 tester
 fail-log/
+test.log 
 
 /raft/test-*.err
 /raft/test-*.log

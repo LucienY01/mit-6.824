@@ -1,6 +1,7 @@
 package kvraft
 
 import (
+	"bytes"
 	"log"
 	"sync"
 	"sync/atomic"
@@ -50,67 +51,95 @@ type KVServer struct {
 	term       int
 	isLeader   bool
 
-	latestOpID map[int64]int64 // map[clientID]latestOpID
+	latestOpID    map[int64]int64 // map[clientID]latestOpID
+	persister     *raft.Persister
+	snapshotIndex int
 }
 
 func (kv *KVServer) applier() {
-	for {
+	for !kv.killed() {
 		applyMsg := <-kv.applyCh
-		if !applyMsg.CommandValid {
-			continue
-		}
-		op := applyMsg.Command.(Op)
 
-		kv.mu.Lock()
-		if op.Type == putAppend && kv.latestOpID[op.PutAppendArgs.ClientID] < op.PutAppendArgs.OpID {
-			args := &op.PutAppendArgs
-			switch args.Op {
-			case "Put":
-				kv.data[args.Key] = args.Value
+		if applyMsg.CommandValid {
+			op := applyMsg.Command.(Op)
 
-			case "Append":
-				v, ok := kv.data[args.Key]
-				if !ok {
+			kv.mu.Lock()
+			if op.Type == putAppend && kv.latestOpID[op.PutAppendArgs.ClientID] < op.PutAppendArgs.OpID {
+				args := &op.PutAppendArgs
+				switch args.Op {
+				case "Put":
 					kv.data[args.Key] = args.Value
+
+				case "Append":
+					v, ok := kv.data[args.Key]
+					if !ok {
+						kv.data[args.Key] = args.Value
+					} else {
+						v += args.Value
+						kv.data[args.Key] = v
+					}
+				}
+
+				kv.latestOpID[args.ClientID] = args.OpID
+				DPrintf("server %d: apply a write op id=%d, %s(%s, %s) from client %d",
+					kv.me, args.OpID, args.Op, args.Key, args.Value, args.ClientID)
+
+			} else if args := &op.GetArgs; op.Type == get && kv.latestOpID[args.ClientID] < args.OpID {
+				kv.latestOpID[args.ClientID] = args.OpID
+				DPrintf("server %d: apply a get op id=%d, get(%s) from client %d",
+					kv.me, args.OpID, args.Key, args.ClientID)
+			} else {
+				if op.Type == putAppend {
+					DPrintf("%d skip putAppend op %d from client %d", kv.me, op.PutAppendArgs.OpID, op.PutAppendArgs.ClientID)
 				} else {
-					v += args.Value
-					kv.data[args.Key] = v
+					DPrintf("%d skip get op %d from client %d", kv.me, op.GetArgs.OpID, op.GetArgs.ClientID)
 				}
 			}
 
-			kv.latestOpID[args.ClientID] = args.OpID
-			DPrintf("server %d: apply a write op id=%d, %s(%s, %s) from client %d",
-				kv.me, args.OpID, args.Op, args.Key, args.Value, args.ClientID)
+			kv.applyIndex = applyMsg.CommandIndex
 
-		} else if args := &op.GetArgs; op.Type == get && kv.latestOpID[args.ClientID] < args.OpID {
-			kv.latestOpID[op.GetArgs.ClientID] = op.GetArgs.OpID
-			DPrintf("server %d: apply a get op id=%d, get(%s) from client %d",
-				kv.me, args.OpID, args.Key, args.ClientID)
-		} else {
-			if op.Type == putAppend {
-				DPrintf("%d skip putAppend op %d from client %d", kv.me, op.PutAppendArgs.OpID, op.PutAppendArgs.ClientID)
-			} else {
-				DPrintf("%d skip get op %d from client %d", kv.me, op.GetArgs.OpID, op.GetArgs.ClientID)
+			// We need to check whether raft's term has changed before waking up a handler,
+			// since periodic termChecker could be unaware of change of term.
+			// If the server is unaware of change of term, advance in applyIndex or latestOpID
+			// can result in a successful but invalid request response.
+			term, _ := kv.rf.GetState()
+			kv.term = term
+
+			kv.cond.Broadcast()
+			kv.mu.Unlock()
+		} else if applyMsg.SnapshotValid {
+			if kv.maxraftstate == -1 {
+				panic("should not use snapshot")
 			}
+
+			kv.mu.Lock()
+			DPrintf("server %d receives a snapshot from RPC, snapshot: term=%d, index=%d",
+				kv.me, applyMsg.SnapshotTerm, applyMsg.SnapshotIndex)
+			ok := kv.rf.CondInstallSnapshot(applyMsg.SnapshotTerm, applyMsg.SnapshotIndex, applyMsg.Snapshot)
+			if ok {
+				DPrintf("server %d: condInstall ok, starts to decode snapshot, snapshot: term=%d, index=%d",
+					kv.me, applyMsg.SnapshotTerm, applyMsg.SnapshotIndex)
+				kv.decodeSnapshot(applyMsg.Snapshot)
+				// kv.applyIndex has changed, we need to wake up handlers waiting for kv.cond.
+				//
+				// We need to check whether raft's term has changed before waking up a handler,
+				// since periodic termChecker could be unaware of change of term.
+				// If the server is unaware of change of term, advance in applyIndex or latestOpID
+				// can result in a successful but invalid request response.
+				term, _ := kv.rf.GetState()
+				kv.term = term
+				kv.cond.Broadcast()
+			}
+			kv.mu.Unlock()
+		} else {
+			panic("invalid applyMsg")
 		}
-
-		kv.applyIndex = applyMsg.CommandIndex
-
-		// We need to check whether raft's term has changed before waking up a handler,
-		// since periodic termChecker could be unaware of change of term.
-		// If the server is unaware of change of term, advance in applyIndex or latestOpID
-		// can result in a successful but invalid request response.
-		term, _ := kv.rf.GetState()
-		kv.term = term
-
-		kv.cond.Broadcast()
-		kv.mu.Unlock()
 	}
 }
 
 func (kv *KVServer) termChecker(originalTerm int) {
 	checkPeriod := raft.MinTimeout / 10 * time.Millisecond
-	for {
+	for !kv.killed() {
 		time.Sleep(checkPeriod)
 
 		kv.mu.Lock()
@@ -186,15 +215,6 @@ func (kv *KVServer) handleRPC(args arguments) Err {
 func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	// Your code here.
 	DPrintf("server %d: start handle get op id=%d, get(%s) from client %d", kv.me, args.OpID, args.Key, args.ClientID)
-	setReplyValue := func() {
-		v, ok := kv.data[args.Key]
-		if !ok {
-			reply.Err = ErrNoKey
-		} else {
-			reply.Err = OK
-			reply.Value = v
-		}
-	}
 
 	kv.mu.Lock()
 	defer kv.mu.Unlock()
@@ -205,7 +225,13 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 		return
 	}
 
-	setReplyValue()
+	v, ok := kv.data[args.Key]
+	if !ok {
+		reply.Err = ErrNoKey
+	} else {
+		reply.Err = OK
+		reply.Value = v
+	}
 	DPrintf("leader %d: finish handle get op id=%d, get(%s) from client %d", kv.me, args.OpID, args.Key, args.ClientID)
 }
 
@@ -246,6 +272,63 @@ func (kv *KVServer) killed() bool {
 	return z == 1
 }
 
+func (kv *KVServer) snapshotTaker() {
+	for !kv.killed() {
+		time.Sleep(10 * time.Millisecond)
+
+		kv.mu.Lock()
+		if kv.applyIndex <= kv.snapshotIndex {
+			kv.mu.Unlock()
+			continue
+		}
+
+		stateSize := kv.persister.RaftStateSize()
+		DPrintf("server %d: state size = %d, maxraftstate = %d, applyIndex=%d, snapshotIndex=%d",
+			kv.me, stateSize, kv.maxraftstate, kv.applyIndex, kv.snapshotIndex)
+		if stateSize > kv.maxraftstate {
+			DPrintf("server %d starts to take a snapshot, new snapshotIndex=%d",
+				kv.me, kv.applyIndex)
+			snapshot := kv.encodeSnapshot()
+			kv.rf.Snapshot(kv.applyIndex, snapshot)
+			kv.snapshotIndex = kv.applyIndex
+		}
+		kv.mu.Unlock()
+	}
+}
+
+type Snapshot struct {
+	Data       map[string]string
+	LatestOpID map[int64]int64
+	ApplyIndex int
+}
+
+func (kv *KVServer) encodeSnapshot() []byte {
+	snapshot := Snapshot{
+		Data:       kv.data,
+		LatestOpID: kv.latestOpID,
+		ApplyIndex: kv.applyIndex,
+	}
+	w := new(bytes.Buffer)
+	e := labgob.NewEncoder(w)
+	if err := e.Encode(snapshot); err != nil {
+		panic(err)
+	}
+	return w.Bytes()
+}
+
+func (kv *KVServer) decodeSnapshot(snapshotBytes []byte) {
+	snapshot := Snapshot{}
+	r := bytes.NewBuffer(snapshotBytes)
+	d := labgob.NewDecoder(r)
+	if err := d.Decode(&snapshot); err != nil {
+		panic(err)
+	}
+	kv.data = snapshot.Data
+	kv.latestOpID = snapshot.LatestOpID
+	kv.applyIndex = snapshot.ApplyIndex
+	kv.snapshotIndex = snapshot.ApplyIndex
+}
+
 // servers[] contains the ports of the set of
 // servers that will cooperate via Raft to
 // form the fault-tolerant key/value service.
@@ -259,24 +342,44 @@ func (kv *KVServer) killed() bool {
 // StartKVServer() must return quickly, so it should start goroutines
 // for any long-running work.
 func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister, maxraftstate int) *KVServer {
+	DPrintf("start kv server %d", me)
 	// call labgob.Register on structures you want
 	// Go's RPC library to marshall/unmarshall.
 	labgob.Register(Op{})
+	labgob.Register(Snapshot{})
 
 	kv := new(KVServer)
 	kv.me = me
 	kv.maxraftstate = maxraftstate
 
 	// You may need initialization code here.
-	kv.data = make(map[string]string)
+	if maxraftstate == -1 {
+		// do not use snapshot
+		kv.data = make(map[string]string)
+		kv.latestOpID = make(map[int64]int64)
+	} else {
+		snapshot := persister.ReadSnapshot()
+		if len(snapshot) == 0 {
+			// The server has not taken any snapshot yet.
+			kv.data = make(map[string]string)
+			kv.latestOpID = make(map[int64]int64)
+		} else {
+			// recover from snapshot
+			kv.decodeSnapshot(snapshot)
+			DPrintf("server %d recover from a snapshot, snapshotIndex=%d", me, kv.snapshotIndex)
+		}
+	}
+	kv.persister = persister
 	kv.cond = sync.NewCond(&kv.mu)
-	kv.latestOpID = make(map[int64]int64)
 
 	kv.applyCh = make(chan raft.ApplyMsg)
 	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
 
 	// You may need initialization code here.
 	go kv.applier()
+	if maxraftstate != -1 {
+		go kv.snapshotTaker()
+	}
 
 	return kv
 }
