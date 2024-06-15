@@ -1,11 +1,16 @@
-# MIT 6.824 2020 Labs
+# MIT 6.824 2021 Labs
+
+## Lab 1: MapReduce
+实现一个MapReduce分布式计算框架的精简版本。
+
+代码在`mr`目录下。
 
 ## Lab 2: Raft
-测试结果保存在`/raft/test-output`目录下。
+实现Raft共识算法。
 
-* `2A-test-output`：完成2A时对2A的测试结果。
-* `2B-test-output`：完成2B时对2B的测试结果。
-* `2C and final-test-output`：完成2C时对2A、2B、2C的测试结果。
+代码在`raft`目录下。
+
+测试结果保存在`/raft/test-output`目录下。其中`2D and final`是完成2D时对4个子Lab的测试结果。
 
 ### 遇到的难题
 #### TestFigure8Unreliable2C：达成一致失败
@@ -32,3 +37,8 @@ golang切片的共享可变性是一个可能的出错的点，以后在使用�
 在2D的测试中，偶尔会出现这种情况。follower选举超时后，启动一个协程来转换为candidate、为自己投票、请求其他结点的投票。
 该协程获取到锁时需要检查自己的currentTerm是否已经增加，currenterm增加了表示自己可能在获取到锁之前为其他结点投过票了。
 我之前没有做这个检查，一个结点为其他结点投票后，又为自己投票，导致了这种错误。
+
+## Lab 3: Fault-tolerant Key/Value Service
+基于Raft实现一个分布式容错Key/Value存储系统。
+
+代码在`kvraft`目录下。
